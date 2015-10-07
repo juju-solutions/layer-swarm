@@ -61,7 +61,7 @@ def start_swarm_etcd_agent(connection_string):
     hookenv.status_set('maintenance', 'starting swarm agent')
     addr = hookenv.unit_private_ip()
     # TODO: refactor to be process run
-    cmd = "docker run -d --name swarmagent swarm join --advertise={0}:{1} {2}/swarm".format(addr, 2375, connection_string)  # noqa
+    cmd = "docker run --restart always -d --name swarmagent swarm join --advertise={0}:{1} {2}/swarm".format(addr, 2375, connection_string)  # noqa
     check_call(split(cmd))
     hookenv.open_port(2375)
 
@@ -69,7 +69,7 @@ def start_swarm_etcd_agent(connection_string):
 def start_swarm_etcd_manager(connection_string):
     hookenv.status_set('maintenance', 'Starting swarm manager')
     # TODO: refactor to be process run
-    cmd = "docker run -d --name swarmmanager -p 2377:2375 swarm manage {}/swarm".format(connection_string)  # noqa
+    cmd = "docker run  --restart always -d --name swarmmanager -p 2377:2375 swarm manage {}/swarm".format(connection_string)  # noqa
     check_call(split(cmd))
     hookenv.open_port(2377)
 
