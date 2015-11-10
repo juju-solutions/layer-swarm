@@ -5,7 +5,11 @@ from charms.reactive import when
 from charms.reactive import when_not
 from charms import reactive
 
-from dockeropts import DockerOpts
+from charms.docker import Docker
+from charms.docker.dockeropts import DockerOpts
+
+from charmhelpers.core.hookenv import status_set
+from charmhelpers.core.hookenv import is_leader
 
 from shlex import split
 from subprocess import check_call
@@ -20,11 +24,20 @@ def swarm_etcd_cluster_setup(etcd):
     up with the manager container on the leader node.
     """
     bind_docker_daemon()
-    start_swarm_etcd_agent(etcd.connection_string())
+    con_string = etcd.connection_string().replace('http', 'etcd')
+    start_swarm_etcd_agent(con_string)
     if hookenv.is_leader():
-        start_swarm_etcd_manager(etcd.connection_string())
+        start_swarm_etcd_manager(con_string)
     reactive.set_state('swarm.available')
     hookenv.status_set('active', 'Swarm configured. Happy swarming')
+
+
+@when('swarm.available')
+def swarm_messaging():
+    if is_leader():
+        status_set('active', 'Swarm leader running')
+    else:
+        status_set('active', 'Swarm follower')
 
 
 @when_not('etcd.connected')
@@ -55,6 +68,7 @@ def swarm_relation_broken():
             check_call(split(cmd))
         except:
             pass
+    status_set('waiting', 'Reconfiguring swarm')
 
 
 def start_swarm_etcd_agent(connection_string):

@@ -13,3 +13,9 @@ subordinate: false
 requires:
   etcd:
     interface: etcd
+provides:
+  api:
+    interface: swarm
+payload:
+  scheduler:
+    type: docker
