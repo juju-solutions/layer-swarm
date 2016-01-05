@@ -1,6 +1,7 @@
 from charmhelpers.core import hookenv
 from charmhelpers.core import host
 from charmhelpers.core.templating import render
+from charmhelpers.core import unitdata
 from charms.reactive import when
 from charms.reactive import when_not
 from charms import reactive
@@ -10,8 +11,13 @@ from charms.docker.dockeropts import DockerOpts
 
 from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
+from charmhelpers.core.hookenv import leader_get
+
+from os import getenv
+from os import path
 
 from shlex import split
+from shutil import copyfile
 from subprocess import check_call
 
 
@@ -95,3 +101,31 @@ def bind_docker_daemon():
     opts.add('host', 'unix:///var/run/docker.sock')
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
     host.service_restart('docker')
+
+@when('server certificate available')
+def secure_docker_daemon():
+    '''
+    '''
+    kv = unitdata.kv()
+    cert = kv.get('tls.server.certificate')
+    with open('docker.server.crt', 'w+') as f:
+        f.write(cert)
+    with open('docker.ca.crt', 'w+') as f:
+        f.write(leader_get('certificate_authority'))
+
+    # schenanigans
+    keypath = 'easy-rsa/easyrsa3/pki/private/{}.key'
+    if path.exists(keypath.format('server')):
+        copyfile(keypath.format('server'), 'docker.server.key')
+    else:
+        copyfile(keypath.format(unit_get('public-address')), 'docker.server.key')
+
+    opts = DockerOpts()
+    charm_dir = getenv('CHARM_DIR')
+    cert_path = '{}/docker.server.crt'.format(charm_dir)
+    ca_path = '{}/docker.ca.crt'.format(charm_dir)
+    key_path = '{}/docker.server.key'.format(charm_dir)
+    opts.add('tlscert', cert_path)
+    opts.add('tlscacert', ca_path)
+    opts.add('tlskey', key_path)
+    render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
