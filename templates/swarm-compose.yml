@@ -1,0 +1,17 @@
+agent:
+  image: swarm
+  restart: always
+  command: |
+    join --advertise=tcp://{{ advertise }} {{connection_string}}/swarm
+{%- if leader %}
+manager:
+  image: swarm
+  restart: always
+  ports:
+    - 2377:2375
+    - 3376:3376
+  volumes:
+    - {{ charm_dir }}/files/tls:/tls
+  command: |
+    manage --tlsverify --tlscacert=/tls/docker.ca.crt --tlscert=/tls/docker.server.crt --tlskey=/tls/docker.server.key -H tcp://0.0.0:3376 --advertise tcp://{{advertise}} {{connection_string}}/swarm
+{% endif -%}
