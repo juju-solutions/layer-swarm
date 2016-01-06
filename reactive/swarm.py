@@ -8,13 +8,16 @@ from charms import reactive
 
 from charms.docker import Docker
 from charms.docker.dockeropts import DockerOpts
+from charms.docker.compose import Compose
 
 from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
 from charmhelpers.core.hookenv import leader_get
+from charmhelpers.core.hookenv import unit_get
 
 from os import getenv
 from os import path
+from os import makedirs
 
 from shlex import split
 from shutil import copyfile
@@ -31,9 +34,19 @@ def swarm_etcd_cluster_setup(etcd):
     """
     bind_docker_daemon()
     con_string = etcd.connection_string().replace('http', 'etcd')
-    start_swarm_etcd_agent(con_string)
-    if hookenv.is_leader():
-        start_swarm_etcd_manager(con_string)
+    addr = hookenv.unit_private_ip()
+
+    databag = {}
+    databag.update({'connection_string': con_string,
+                    'leader': is_leader(),
+                    'charm_dir': getenv('CHARM_DIR'),
+                    'advertise': '{}:2376'.format(addr)}
+                    )
+    # render the docker-compose template
+    render('swarm-compose.yml', 'files/swarm/docker-compose.yml', databag)
+    c = Compose('files/swarm')
+    c.up()
+
     reactive.set_state('swarm.available')
     hookenv.status_set('active', 'Swarm configured. Happy swarming')
 
@@ -63,41 +76,18 @@ def swarm_relation_broken():
     This state should only be entered if the Docker host relation with ETCD has
     been broken, thus leaving the cluster without a discovery service
     """
-    cmd = "docker kill swarmagent"
-    try:
-        check_call(split(cmd))
-    except:
-        pass
-    if hookenv.is_leader():
-        cmd = "docker kill swarmmanger"
-        try:
-            check_call(split(cmd))
-        except:
-            pass
+
+    c = Compose('files/swarm')
+    c.kill()
+    remove_state('swarm.available')
     status_set('waiting', 'Reconfiguring swarm')
 
-
-def start_swarm_etcd_agent(connection_string):
-    hookenv.status_set('maintenance', 'starting swarm agent')
-    addr = hookenv.unit_private_ip()
-    # TODO: refactor to be process run
-    cmd = "docker run --restart always -d --name swarmagent swarm join --advertise={0}:{1} {2}/swarm".format(addr, 2375, connection_string)  # noqa
-    check_call(split(cmd))
-    hookenv.open_port(2375)
-
-
-def start_swarm_etcd_manager(connection_string):
-    hookenv.status_set('maintenance', 'Starting swarm manager')
-    # TODO: refactor to be process run
-    cmd = "docker run  --restart always -d --name swarmmanager -p 2377:2375 swarm manage {}/swarm".format(connection_string)  # noqa
-    check_call(split(cmd))
-    hookenv.open_port(2377)
 
 
 def bind_docker_daemon():
     hookenv.status_set('maintenance', 'Configuring Docker for TCP connections')
     opts = DockerOpts()
-    opts.add('host', 'tcp://{}:2375'.format(hookenv.unit_private_ip()))
+    opts.add('host', 'tcp://{}:2376'.format(hookenv.unit_private_ip()))
     opts.add('host', 'unix:///var/run/docker.sock')
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
     host.service_restart('docker')
@@ -106,19 +96,22 @@ def bind_docker_daemon():
 def secure_docker_daemon():
     '''
     '''
+    if not path.exists('files/tls'):
+        makedirs('files/tls')
+
     kv = unitdata.kv()
     cert = kv.get('tls.server.certificate')
-    with open('docker.server.crt', 'w+') as f:
+    with open('files/tls/docker.server.crt', 'w+') as f:
         f.write(cert)
-    with open('docker.ca.crt', 'w+') as f:
+    with open('files/tls/docker.ca.crt', 'w+') as f:
         f.write(leader_get('certificate_authority'))
 
     # schenanigans
     keypath = 'easy-rsa/easyrsa3/pki/private/{}.key'
     if path.exists(keypath.format('server')):
-        copyfile(keypath.format('server'), 'docker.server.key')
+        copyfile(keypath.format('server'), 'files/tls/docker.server.key')
     else:
-        copyfile(keypath.format(unit_get('public-address')), 'docker.server.key')
+        copyfile(keypath.format(unit_get('public-address')), 'files/tls/docker.server.key')
 
     opts = DockerOpts()
     charm_dir = getenv('CHARM_DIR')
