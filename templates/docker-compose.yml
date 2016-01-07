@@ -1,0 +1,13 @@
+agent:
+  image: swarm
+  restart: always
+  command: join --advertise={{addr}}:{{port}} {{connection_string}}/swarm
+{%- if leader %}
+manager:
+  image: swarm
+  restart: always
+  ports:
+    - 2376:2375
+  command: manage {{connection_string}}/swarm
+{% endif -%}
+
