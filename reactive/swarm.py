@@ -7,6 +7,7 @@ from charms import reactive
 
 from charms.docker import Docker
 from charms.docker.dockeropts import DockerOpts
+from charms.docker.compose import Compose
 
 from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
@@ -25,9 +26,17 @@ def swarm_etcd_cluster_setup(etcd):
     """
     bind_docker_daemon()
     con_string = etcd.connection_string().replace('http', 'etcd')
-    start_swarm_etcd_agent(con_string)
-    if hookenv.is_leader():
-        start_swarm_etcd_manager(con_string)
+
+    opts = {}
+    opts['connection_string'] = con_string
+    opts['addr'] = hookenv.unit_private_ip()
+    opts['port'] = 2375
+    opts['leader'] = is_leader()
+
+    render('docker-compose.yml', 'files/swarm/docker-compose.yml', opts)
+    compose = Compose('files/swarm')
+    compose.up()
+    hookenv.open_port(2376)
     reactive.set_state('swarm.available')
     hookenv.status_set('active', 'Swarm configured. Happy swarming')
 
@@ -57,36 +66,11 @@ def swarm_relation_broken():
     This state should only be entered if the Docker host relation with ETCD has
     been broken, thus leaving the cluster without a discovery service
     """
-    cmd = "docker kill swarmagent"
-    try:
-        check_call(split(cmd))
-    except:
-        pass
-    if hookenv.is_leader():
-        cmd = "docker kill swarmmanger"
-        try:
-            check_call(split(cmd))
-        except:
-            pass
+    c = Compose('files/swarm')
+    c.kill()
+    c.rm()
+    remove_state('swarm.available')
     status_set('waiting', 'Reconfiguring swarm')
-
-
-def start_swarm_etcd_agent(connection_string):
-    hookenv.status_set('maintenance', 'starting swarm agent')
-    addr = hookenv.unit_private_ip()
-    # TODO: refactor to be process run
-    cmd = "docker run --restart always -d --name swarmagent swarm join --advertise={0}:{1} {2}/swarm".format(addr, 2375, connection_string)  # noqa
-    check_call(split(cmd))
-    hookenv.open_port(2375)
-
-
-def start_swarm_etcd_manager(connection_string):
-    hookenv.status_set('maintenance', 'Starting swarm manager')
-    # TODO: refactor to be process run
-    cmd = "docker run  --restart always -d --name swarmmanager -p 2377:2375 swarm manage {}/swarm".format(connection_string)  # noqa
-    check_call(split(cmd))
-    hookenv.open_port(2377)
-
 
 def bind_docker_daemon():
     hookenv.status_set('maintenance', 'Configuring Docker for TCP connections')
