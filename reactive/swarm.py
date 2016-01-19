@@ -11,8 +11,16 @@ from charms.docker.compose import Compose
 
 from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
+from charmhelpers.core.hookenv import leader_get
+from charmhelpers.core.hookenv import unit_get
+from charmhelpers.core import unitdata
+
+from os import path
+from os import makedirs
+from os import getenv
 
 from shlex import split
+from shutil import copyfile
 from subprocess import check_call
 
 
@@ -79,3 +87,28 @@ def bind_docker_daemon():
     opts.add('host', 'unix:///var/run/docker.sock')
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
     host.service_restart('docker')
+
+@when('server certificate available')
+def enable_client_tls():
+    '''
+    Copy the TLS certificates in place and generate mount points for the swarm
+    manager to mount the certs. This enables client-side TLS security on the
+    TCP service.
+    '''
+    if not path.exists('files/tls'):
+        makedirs('files/tls')
+
+    kv = unitdata.kv()
+    cert = kv.get('tls.server.certificate')
+    with open('files/tls/cert.pem', 'w+') as f:
+        f.write(cert)
+    with open('files/tls/ca.pem', 'w+') as f:
+        f.write(leader_get('certificate_authority'))
+
+    # schenanigans
+    keypath = 'easy-rsa/easyrsa3/pki/private/{}.key'
+    server = getenv('JUJU_UNIT_NAME').replace('/', '_')
+    if path.exists(keypath.format(server)):
+        copyfile(keypath.format(server), 'files/tls/key.pem')
+    else:
+        copyfile(keypath.format(unit_get('public-address')), 'files/tls/key.pem')

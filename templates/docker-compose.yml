@@ -8,6 +8,7 @@ manager:
   restart: always
   ports:
     - 2376:2375
-  command: manage {{connection_string}}/swarm
+  volumes:
+    - {{charm_dir}}/files/tls:/tls
+  command: manage {{connection_string}}/swarm --tlsverify --tlscacert=/tls/ca.pem --tlscert=/tls/cert.pem --tlskey=/tls/key.pem
 {% endif -%}
-
