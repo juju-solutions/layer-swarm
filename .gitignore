@@ -2,3 +2,4 @@
 *.pyc
 .unit-state.db
 .cache
+.DS_Store
