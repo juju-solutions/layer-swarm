@@ -1,1 +1,5 @@
-includes: ['layer:docker', 'layer:tls', 'interface:etcd']
+includes:
+  - 'layer:docker'
+  - 'layer:tls'
+  - 'interface:etcd'
+  - 'interface:consul'

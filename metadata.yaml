@@ -13,6 +13,8 @@ subordinate: false
 requires:
   etcd:
     interface: etcd
+  consul:
+    interface: consul
 provides:
   api:
     interface: swarm
