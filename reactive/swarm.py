@@ -9,6 +9,7 @@ from charms.docker import Docker
 from charms.docker.dockeropts import DockerOpts
 from charms.docker.compose import Compose
 
+from charmhelpers.core.hookenv import log
 from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
 
@@ -81,7 +82,7 @@ def bind_docker_daemon():
     host.service_restart('docker')
 
 @when('easyrsa installed')
-@when_not('swarm.tls.config.modified')
+@when_not('swarm.tls.opensslconfig.modified')
 def inject_swarm_tls_template():
     """
     layer-tls installs a default OpenSSL Configuration that is incompatibile
@@ -93,7 +94,7 @@ def inject_swarm_tls_template():
     else:
         status_set('maintenance', 'Reconfiguring SSL PKI configuration')
 
-    print('Updating EasyRSA3 OpenSSL Config')
+    log('Updating EasyRSA3 OpenSSL Config')
     openssl_config = 'easy-rsa/easyrsa3/openssl-1.0.cnf'
     with open(openssl_config, 'r') as f:
         existing_template = f.readlines()
@@ -112,5 +113,5 @@ def inject_swarm_tls_template():
     with open(openssl_config, 'w') as f:
         for line in swarm_ssl_config:
             f.write(line)
-    reactive.set_state('swarm.tls.config.modified')
-    reactive.set_state('tls.regenerate_certificates')
+    reactive.set_state('swarm.tls.opensslconfig.modified')
+    reactive.set_state('easyrsa configured')
