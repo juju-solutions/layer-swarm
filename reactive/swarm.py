@@ -79,3 +79,38 @@ def bind_docker_daemon():
     opts.add('host', 'unix:///var/run/docker.sock')
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
     host.service_restart('docker')
+
+@when('easyrsa installed')
+@when_not('swarm.tls.config.modified')
+def inject_swarm_tls_template():
+    """
+    layer-tls installs a default OpenSSL Configuration that is incompatibile
+    with how swarm expects TLS keys to be generated. We will append what
+    we need to the TLS config, and let layer-tls take over from there.
+    """
+    if not is_leader():
+        return
+    else:
+        status_set('maintenance', 'Reconfiguring SSL PKI configuration')
+
+    print('Updating EasyRSA3 OpenSSL Config')
+    openssl_config = 'easy-rsa/easyrsa3/openssl-1.0.cnf'
+    with open(openssl_config, 'r') as f:
+        existing_template = f.readlines()
+
+    for idx, line in enumerate(existing_template):
+        if '[ req ]' in line:
+            existing_template.insert(idx + 1, "req_extensions = v3_req\n")
+
+    v3_reqs = ['[ v3_req ]\n',
+    'basicConstraints = CA:FALSE\n',
+    'keyUsage = nonRepudiation, digitalSignature, keyEncipherment\n',
+    'extendedKeyUsage = clientAuth, serverAuth\n']
+
+    swarm_ssl_config = existing_template + v3_reqs
+
+    with open(openssl_config, 'w') as f:
+        for line in swarm_ssl_config:
+            f.write(line)
+    reactive.set_state('swarm.tls.config.modified')
+    reactive.set_state('tls.regenerate_certificates')
