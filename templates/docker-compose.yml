@@ -7,7 +7,19 @@ manager:
   image: swarm
   restart: always
   ports:
-    - 2376:2375
-  command: manage {{connection_string}}/swarm
-{% endif -%}
+    - 3376:2375
+  volumes:
+    - /etc/docker:/tls
+  command:
+    - manage
+    - --tlsverify
+    - --tlscacert=/tls/ca.pem
+    - --tlscert=/tls/server.pem
+    - --tlskey=/tls/server-key.pem
+    - --strategy
+    - spread
+    - --advertise
+    - {{ addr }}:{{ port }}
+    - {{ connection_string }}/swarm
 
+{% endif -%}
