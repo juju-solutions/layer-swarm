@@ -1,2 +1,6 @@
-includes: ['layer:docker', 'layer:tls', 'interface:etcd']
 repo: https://github.com/chuckbutler/layer-swarm.git
+includes:
+  - 'layer:docker'
+  - 'layer:tls'
+  - 'interface:etcd'
+  - 'interface:consul'
