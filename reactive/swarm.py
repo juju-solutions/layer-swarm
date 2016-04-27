@@ -42,44 +42,31 @@ def swarm_etcd_cluster_setup(etcd):
     """
     con_string = etcd.connection_string().replace('http', 'etcd')
     bind_docker_daemon(con_string)
-
-    opts = {}
-    opts['connection_string'] = con_string
-    opts['addr'] = hookenv.unit_private_ip()
-    opts['port'] = 2376
-    opts['leader'] = is_leader()
-    opts['charm_dir'] = getenv('CHARM_DIR')
-
-    render('docker-compose.yml', 'files/swarm/docker-compose.yml', opts)
-    compose = Compose('files/swarm')
-    compose.up()
-    hookenv.open_port(2376)
-    if is_leader():
-        hookenv.open_port(3376)
-    reactive.set_state('swarm.available')
+    start_swarm(con_string)
     hookenv.status_set('active', 'Swarm configured. Happy swarming')
 
 
 @when('consul.available', 'docker.available')
 @when_not('swarm.available')
 def swarm_consul_cluster_setup(consul):
-    hodor = []
-    for unit in consul.list_unit_data():
-        hodor.append("{}:{}".format(unit['address'], unit['port']))
-    # only use the first while we test
+    for host in consul.list_unit_data():
+        host_string = "consul://{}:{}".format(host['address'], host['port'])
+        connection_string = "{}{},".format(connection_string, host_string)
+    bind_docker_daemon(connection_string)
+    start_swarm(connection_string)
+
+
+def start_swarm(cluster_string):
+    ''' Render the compose configuration and start the swarm scheduler '''
     opts = {}
     opts['addr'] = hookenv.unit_private_ip()
     opts['port'] = 2375
     opts['leader'] = is_leader()
-    opts['connection_string'] = "consul://{}".format(hodor[0])
+    opts['connection_string'] = cluster_string
     render('docker-compose.yml', 'files/swarm/docker-compose.yml', opts)
-    bind_docker_daemon(opts['connection_string'])
-    reactive.set_state('restart-docker')
-
-@when('restart-docker')
-def restart_docker_service():
-    host.service_restart('docker')
-    reactive.remove_state('restart-docker')
+    c = Compose('files/swarm')
+    c.up()
+    reactive.set_state('swarm.available')
 
 @when('swarm.available')
 def swarm_messaging():
@@ -181,7 +168,7 @@ def enable_client_tls():
 
 @when('swarm.available')
 @when_not('client.credentials.placed')
-def prepare_package():
+def prepare_end_user_package():
     """ Generate a downloadable package for clients to use to speak to the
     swarm cluster. """
     if is_leader():
@@ -205,13 +192,13 @@ def prepare_package():
 
 
 
-def bind_docker_daemon():
+def bind_docker_daemon(connection_string):
     hookenv.status_set('maintenance', 'Configuring Docker for TCP connections')
     opts = DockerOpts()
     private_address = hookenv.unit_private_ip()
     opts.add('host', 'tcp://{}:2376'.format(private_address))
     opts.add('host', 'unix:///var/run/docker.sock')
     opts.add('cluster-advertise', '{}:2376'.format(private_address))
-    opts.add('cluster-store', connection_string)
+    opts.add('cluster-store', connection_string, strict=True)
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
-    reactive.set_state('restart-docker')
+    host.service_restart('docker')
