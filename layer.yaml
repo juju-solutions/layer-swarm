@@ -1,1 +1,2 @@
 includes: ['layer:docker', 'layer:tls', 'interface:etcd']
+repo: https://github.com/chuckbutler/layer-swarm.git
