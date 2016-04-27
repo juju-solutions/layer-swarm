@@ -15,10 +15,12 @@ from charmhelpers.core.hookenv import is_leader
 from charmhelpers.core.hookenv import leader_get
 from charmhelpers.core.hookenv import unit_get
 from charmhelpers.core import unitdata
+from charmhelpers.core.host import chdir
 
-from os import path
-from os import makedirs
 from os import getenv
+from os import makedirs
+from os import path
+from os import rename
 
 import subprocess
 from shlex import split
@@ -87,7 +89,7 @@ def swarm_relation_broken():
     c = Compose('files/swarm')
     c.kill()
     c.rm()
-    remove_state('swarm.available')
+    reactive.remove_state('swarm.available')
     status_set('waiting', 'Reconfiguring swarm')
 
 
@@ -117,7 +119,7 @@ def inject_swarm_tls_template():
         f.writelines(xtype)
 
     reactive.set_state('swarm.tls.opensslconfig.modified')
-    reactive.set_state('easyrsa reconfigured')
+    reactive.set_state('easyrsa configured')
 
 
 @when('tls.server.certificate available')
@@ -165,6 +167,17 @@ def prepare_package():
     if is_leader():
         client_cert('./swarm_credentials')
         ca('./swarm_credentials')
+
+        # Prepare the workspace
+        with chdir('./swarm_credentials'):
+            rename('client.key', 'key.pem')
+            rename('client.crt', 'cert.pem')
+            rename('ca.crt', 'ca.pem')
+
+        template_vars = { 'public_address': unit_get('public-address')}
+
+        render('enable.sh', './swarm_credentials/enable.sh', template_vars)
+
         cmd = 'tar cvf swarm_credentials.tar swarm_credentials'
         subprocess.check_call(split(cmd))
         copyfile('swarm_credentials.tar', '/home/ubuntu/swarm_credentials.tar')
