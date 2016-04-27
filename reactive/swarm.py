@@ -52,6 +52,8 @@ def swarm_etcd_cluster_setup(etcd):
     compose = Compose('files/swarm')
     compose.up()
     hookenv.open_port(2376)
+    if is_leader():
+        hookenv.open_port(3376)
     reactive.set_state('swarm.available')
     hookenv.status_set('active', 'Swarm configured. Happy swarming')
 
