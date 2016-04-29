@@ -21,6 +21,6 @@ requires:
 provides:
   api:
     interface: swarm
-payload:
+payloads:
   scheduler:
     type: docker

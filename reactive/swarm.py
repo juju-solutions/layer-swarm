@@ -16,6 +16,7 @@ from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
 from charmhelpers.core.hookenv import leader_get
 from charmhelpers.core.hookenv import unit_get
+from charmhelpers.core.hookenv import open_port
 from charmhelpers.core import unitdata
 from charmhelpers.core.host import chdir
 
@@ -49,18 +50,19 @@ def swarm_etcd_cluster_setup(etcd):
 @when('consul.available', 'docker.available')
 @when_not('swarm.available')
 def swarm_consul_cluster_setup(consul):
+    connection_string = "consul://"
     for host in consul.list_unit_data():
-        host_string = "consul://{}:{}".format(host['address'], host['port'])
+        host_string = "{}:{}".format(host['address'], host['port'])
         connection_string = "{}{},".format(connection_string, host_string)
-    bind_docker_daemon(connection_string)
-    start_swarm(connection_string)
+    bind_docker_daemon(connection_string.rstrip(','))
+    start_swarm(connection_string.rstrip(','))
 
 
 def start_swarm(cluster_string):
     ''' Render the compose configuration and start the swarm scheduler '''
     opts = {}
     opts['addr'] = hookenv.unit_private_ip()
-    opts['port'] = 2375
+    opts['port'] = 2376
     opts['leader'] = is_leader()
     opts['connection_string'] = cluster_string
     render('docker-compose.yml', 'files/swarm/docker-compose.yml', opts)
@@ -202,3 +204,6 @@ def bind_docker_daemon(connection_string):
     opts.add('cluster-store', connection_string, strict=True)
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
     host.service_restart('docker')
+    open_port(2376)
+    if is_leader():
+        open_port(3376)
