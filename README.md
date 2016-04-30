@@ -83,9 +83,72 @@ as after scaling swarm.
 
 ## Run a workload
 
-Once you've established your credentials and verified you can communciate with
+Once you've established your credentials and verified you can communicate with
 the swarm cluster over TLS. You're now ready to launch workloads on your
 swarm cluster.
 
 This can be done via the docker cli, docker-compose, or with
 Juju Charms that are written using [layer-docker](https://github.com/juju-solutions/layer-docker).
+
+    docker run hello-world
+
+    cat <<'EOF' > docker-compose.yml
+    version: '2'
+    services:
+      hello:
+        image: hello-world
+    EOF
+
+    docker-compose up
+
+After executing the above commands, you should see output similiar to the following:
+
+    docker-compose up
+    Creating network "tmp_default" with the default driver
+    Creating tmp_hello_1
+    Attaching to tmp_hello_1
+    hello_1  |
+    hello_1  | Hello from Docker.
+    hello_1  | This message shows that your installation appears to be working correctly.
+    hello_1  |
+    hello_1  | To generate this message, Docker took the following steps:
+    hello_1  |  1. The Docker client contacted the Docker daemon.
+    hello_1  |  2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
+    hello_1  |  3. The Docker daemon created a new container from that image which runs the
+    hello_1  |     executable that produces the output you are currently reading.
+    hello_1  |  4. The Docker daemon streamed that output to the Docker client, which sent it
+    hello_1  |     to your terminal.
+    hello_1  |
+    hello_1  | To try something more ambitious, you can run an Ubuntu container with:
+    hello_1  |  $ docker run -it ubuntu bash
+    hello_1  |
+    hello_1  | Share images, automate workflows, and more with a free Docker Hub account:
+    hello_1  |  https://hub.docker.com
+    hello_1  |
+    hello_1  | For more examples and ideas, visit:
+    hello_1  |  https://docs.docker.com/engine/userguide/
+    hello_1  |
+    tmp_hello_1 exited with code 0
+
+
+# Caveats and Known issues
+
+- When running workloads that bind to the host port, at present you will need
+to follow up with opening the public port if you wish to enable traffic from
+the internet to access the service. For example, to expose port 8000 for
+a workload running on swarm/0
+
+     `juju run swarm/0 open-port 8000`
+
+- Cluster PKI is managed via the leader. If you juju destroy-machine on the
+swarm leader unit, you will effectively remove any generated PKI. the
+newly elected leader will still be able to issue new certificates for the
+cluster, however existing certificates / CSR's may need to be regenerated.
+
+- ZFS Storage support has only been verified on Xenial hosts
+
+# More Info
+
+- [Upstream Bugs](https://github.com/docker/swarm/issues)
+- [Charm Bugs](https://github.com/juju-solutions/layer-swarm/issues)
+- [Juju Mailing List](mailto:juju@lists.ubuntu.com)
