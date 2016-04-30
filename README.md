@@ -1,55 +1,91 @@
-# Layer for Swarm
+# Swarm
 
-This is a reactive layer for Docker Swarm. A multi-host scheduler for application
-container workloads. This layer is intended to extend the [docker layer](http://github.com/juju-solutions/layer-docker) to provide an elastic
-compute cluster by extending the basic docker features, allowing the charm
-author to launch their containerized workloads across any of the hosts by
-communicating with the swarm scheduler in leu of the local docker daemon.
 
-### Reactive States
+## Docker Swarm Overview
 
-`swarm.available` Once the swarm.available state has been reached, the charm
-has settled and declared its resource to the cluster. Any subsequent container
-launches can and should be targeted at the swarm cluster manager on port **2377**
+Docker Swarm is native clustering for Docker. It turns a pool of Docker hosts
+into a single, virtual Docker host. Because Docker Swarm serves the standard
+Docker API, any tool that already communicates with a Docker daemon can use
+Swarm to transparently scale to multiple hosts. Supported tools include, but
+are not limited to, the following:
+
+- Dokku
+- Docker Compose
+- Jenkins
+
+And of course, the Docker client itself is also supported.
 
 ## Usage
 
-To build your own swarm cluster, or to extend an existing charm with swarm
-properties:
+In order to properly scale and coordinate a swarm cluster, you will need 2
+charms. A keyvalue store like Consul or Etcd, and the Swarm host(s). To evaluate
+the charm as cheaply as possible you can deploy a single node of each:
 
-in your `layer.yaml`
+    juju deploy cs:trusty/etcd
+    juju deploy cs:trusty/swarm
+    juju expose swarm
 
-```yaml
-includes: ['layer: docker', 'layer:swarm']
-```
+This will deploy a single unit etcd application, and a single swarm host,
+configured as both a swarm manager, and a participating member in the cluster.
 
-This will ensure you have the latest Docker binary installed, and have the
-swarm cluster configuration included as well. Optionally you can include a SDN
-layer, such as flannel:
+## Using Swarm
 
-```yaml
-includes: ['layer:docker', 'layer:swarm', 'layer:flannel']
-```
+By default, the swarm cluter is TLS terminated with self signed PKI, under
+coordination from the swarm leader. (This is visible in `juju status` output)
 
-Which will enable cross-host container communication, via reconfiguring the
-docker bridge to use the flannel overlay network.
+    juju scp swarm/0:swarm_credentials.tar .
+    tar xvf swarm_credentials.tar
+    cd swarm_credentials
+    source enable.sh
+    docker info
 
-## Deployment
+The `enable.sh` script will load your shell environment with the following
+environment variables, allowing you to connect to the swarm service:
 
-This formation depends on the swarm node(s), and an ETCD service for coordination.
+- DOCKER_HOST=tcp://{{ ip address of swarm master }}:3376
+- DOCKER_CERT_PATH={{present working directory}}
+- DOCKER_ENABLE_TLS=1
 
-juju deploy swarm
-juju deploy etcd
-juju add-relation swarm etcd
 
-Once the cluster has settled, you can communicate with the swarm daemon
+#### How do I load these credentials into docker-machine?
 
-```bash
-export DOCKER_HOST=tcp://{{ip-of-master}}:2377
-docker info
-```
+This is an ongoing effort. There is [a bug in the upstream](https://github.com/docker/machine/issues/1221)
+docker-machine project we are tracking to resolution, at which time this will
+be possible.
 
-## Known Caveats
 
-See the `hacking.md` document to track the latest development, what our focus is
-for the future of the swarm layer, and how to contribute.
+
+The final line of the usage commands will display information about the status
+of your Swarm cluster.
+
+    Containers: 2
+     Running: 2
+     Paused: 0
+     Stopped: 0
+    Images: 1
+    Server Version: swarm/1.1.3
+    Role: primary
+    Strategy: spread
+    Filters: health, port, dependency, affinity, constraint
+    Nodes: 1
+     swarm_swarm_1: 55.55.55.55:2376
+      └ Status: Healthy
+      └ Containers: 2
+      └ Reserved CPUs: 0 / 1
+      └ Reserved Memory: 0 B / 513.4 MiB
+      └ Error: (none)
+      └ UpdatedAt: 2016-04-30T18:57:59Z
+
+The output will give you an idea of how loaded your cluster is and how well it
+is performing. This output can be handy when debugging cluster behavior, such
+as after scaling swarm.
+
+
+## Run a workload
+
+Once you've established your credentials and verified you can communciate with
+the swarm cluster over TLS. You're now ready to launch workloads on your
+swarm cluster.
+
+This can be done via the docker cli, docker-compose, or with
+Juju Charms that are written using [layer-docker](https://github.com/juju-solutions/layer-docker).
