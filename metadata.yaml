@@ -1,11 +1,10 @@
 name: swarm
-summary: juju-compose layer for swarm. Does not stand on its own
+summary: Swarm is a native method to cluster docker hosts.
 maintainers:
     - Charles Butler <charles.butler@canonical.com>
     - Matt Bruzek <matthew.bruzek@canonical.com>
 description: |
-  a "mixin" layer for swarm, to add swarm capability to any docker based charm.
-  This directly
+   Swarm is a multi-host scheduler for application container workloads.
 tags:
   - containers
   - layer
@@ -21,6 +20,4 @@ requires:
 provides:
   api:
     interface: swarm
-payloads:
-  scheduler:
-    type: docker
+
