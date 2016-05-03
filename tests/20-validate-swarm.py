@@ -9,7 +9,7 @@ class TestSwarm(unittest.TestCase):
     def setUpClass(cls):
         cls.d = amulet.Deployment(series='trusty')
         cls.d.add('swarm')
-        cls.d.add('consul', 'cs:~containers/trusty/consul-0')
+        cls.d.add('consul', 'cs:~containers/trusty/consul-1')
         cls.d.configure('swarm', {})
         cls.d.configure('consul', {'bootstrap-expect': 1})
         cls.d.relate('swarm:consul', 'consul:api')
