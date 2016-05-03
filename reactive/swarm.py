@@ -1,11 +1,9 @@
-from charmhelpers.core import hookenv
-from charmhelpers.core import host
 from charmhelpers.core.templating import render
+from charms.reactive import remove_state
+from charms.reactive import set_state
 from charms.reactive import when
 from charms.reactive import when_not
-from charms import reactive
 
-from charms.docker import Docker
 from charms.docker import DockerOpts
 from charms.docker import Compose
 
@@ -14,8 +12,11 @@ from charmhelpers.core.hookenv import status_set
 from charmhelpers.core.hookenv import is_leader
 from charmhelpers.core.hookenv import leader_get
 from charmhelpers.core.hookenv import unit_get
+from charmhelpers.core.hookenv import open_port
+from charmhelpers.core.hookenv import unit_private_ip
 from charmhelpers.core import unitdata
 from charmhelpers.core.host import chdir
+from charmhelpers.core.host import service_restart
 
 from os import getenv
 from os import makedirs
@@ -40,28 +41,33 @@ def swarm_etcd_cluster_setup(etcd):
     """
     con_string = etcd.connection_string().replace('http', 'etcd')
     bind_docker_daemon(con_string)
+    start_swarm(con_string)
+    status_set('active', 'Swarm configured. Happy swarming')
 
+
+@when('consul.available', 'docker.available')
+@when_not('swarm.available')
+def swarm_consul_cluster_setup(consul):
+    connection_string = "consul://"
+    for unit in consul.list_unit_data():
+        host_string = "{}:{}".format(unit['address'], unit['port'])
+        connection_string = "{}{},".format(connection_string, host_string)
+    bind_docker_daemon(connection_string.rstrip(','))
+    start_swarm(connection_string.rstrip(','))
+
+
+def start_swarm(cluster_string):
+    ''' Render the compose configuration and start the swarm scheduler '''
     opts = {}
-    opts['connection_string'] = con_string
-    opts['addr'] = hookenv.unit_private_ip()
+    opts['addr'] = unit_private_ip()
     opts['port'] = 2376
     opts['leader'] = is_leader()
-    opts['charm_dir'] = getenv('CHARM_DIR')
-
+    opts['connection_string'] = cluster_string
     render('docker-compose.yml', 'files/swarm/docker-compose.yml', opts)
-    compose = Compose('files/swarm')
-    compose.up()
-    hookenv.open_port(2376)
-    if is_leader():
-        hookenv.open_port(3376)
-    reactive.set_state('swarm.available')
-    hookenv.status_set('active', 'Swarm configured. Happy swarming')
+    c = Compose('files/swarm')
+    c.up()
+    set_state('swarm.available')
 
-
-@when('restart-docker')
-def restart_docker_service():
-    host.service_restart('docker')
-    reactive.remove_state('restart-docker')
 
 @when('swarm.available')
 def swarm_messaging():
@@ -71,17 +77,17 @@ def swarm_messaging():
         status_set('active', 'Swarm follower')
 
 
-@when_not('etcd.connected')
+@when_not('etcd.connected', 'consul.connected')
 def user_notice():
     """
-    Notify the user they need to relate the charm with ETCD to trigger the
-    swarm cluster configuration.
+    Notify the user they need to relate the charm with ETCD or Consul to
+    trigger the swarm cluster configuration.
     """
-    hookenv.status_set('blocked', 'Pending ETCD connection for swarm')
+    status_set('waiting', 'Waiting on Etcd or Consul relation')
 
 
 @when('swarm.available')
-@when_not('etcd.connected')
+@when_not('etcd.connected', 'consul.connected')
 def swarm_relation_broken():
     """
     Destroy the swarm agent, and optionally the manager.
@@ -91,7 +97,7 @@ def swarm_relation_broken():
     c = Compose('files/swarm')
     c.kill()
     c.rm()
-    reactive.remove_state('swarm.available')
+    remove_state('swarm.available')
     status_set('waiting', 'Reconfiguring swarm')
 
 
@@ -101,7 +107,7 @@ def inject_swarm_tls_template():
     """
     layer-tls installs a default OpenSSL Configuration that is incompatibile
     with how swarm expects TLS keys to be generated. We will append what
-    we need to the x509-type, and poke layer-tls to regenerate whatever is there.
+    we need to the x509-type, and poke layer-tls to regenerate.
     """
     if not is_leader():
         return
@@ -117,11 +123,11 @@ def inject_swarm_tls_template():
     # use list comprehension to enable clients,server usage for certificates
     # with the docker/swarm daemons.
     xtype = [w.replace('serverAuth', 'serverAuth, clientAuth') for w in existing_template]  # noqa
-    with open (openssl_config, 'w+') as f:
+    with open(openssl_config, 'w+') as f:
         f.writelines(xtype)
 
-    reactive.set_state('swarm.tls.opensslconfig.modified')
-    reactive.set_state('easyrsa configured')
+    set_state('swarm.tls.opensslconfig.modified')
+    set_state('easyrsa configured')
 
 
 @when('tls.server.certificate available')
@@ -147,7 +153,8 @@ def enable_client_tls():
     if path.exists(keypath.format(server)):
         copyfile(keypath.format(server), '/etc/docker/server-key.pem')
     else:
-        copyfile(keypath.format(unit_get('public-address')), '/etc/docker/server-key.pem')
+        copyfile(keypath.format(unit_get('public-address')),
+                 '/etc/docker/server-key.pem')
 
     opts = DockerOpts()
     config_dir = '/etc/docker'
@@ -163,7 +170,7 @@ def enable_client_tls():
 
 @when('swarm.available')
 @when_not('client.credentials.placed')
-def prepare_package():
+def prepare_end_user_package():
     """ Generate a downloadable package for clients to use to speak to the
     swarm cluster. """
     if is_leader():
@@ -176,23 +183,26 @@ def prepare_package():
             rename('client.crt', 'cert.pem')
             rename('ca.crt', 'ca.pem')
 
-        template_vars = { 'public_address': unit_get('public-address')}
+        template_vars = {'public_address': unit_get('public-address')}
 
         render('enable.sh', './swarm_credentials/enable.sh', template_vars)
 
         cmd = 'tar cvf swarm_credentials.tar swarm_credentials'
         subprocess.check_call(split(cmd))
         copyfile('swarm_credentials.tar', '/home/ubuntu/swarm_credentials.tar')
-        reactive.set_state('client.credentials.placed')
+        set_state('client.credentials.placed')
 
 
 def bind_docker_daemon(connection_string):
-    hookenv.status_set('maintenance', 'Configuring Docker for TCP connections')
+    status_set('maintenance', 'Configuring Docker for TCP connections')
     opts = DockerOpts()
-    private_address = hookenv.unit_private_ip()
+    private_address = unit_private_ip()
     opts.add('host', 'tcp://{}:2376'.format(private_address))
     opts.add('host', 'unix:///var/run/docker.sock')
     opts.add('cluster-advertise', '{}:2376'.format(private_address))
-    opts.add('cluster-store', connection_string)
+    opts.add('cluster-store', connection_string, strict=True)
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
-    reactive.set_state('restart-docker')
+    service_restart('docker')
+    open_port(2376)
+    if is_leader():
+        open_port(3376)
