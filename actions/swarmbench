@@ -1,0 +1,84 @@
+#!/bin/bash
+
+set -eu
+
+RUNTIME_IMAGE='lazypower/swarm-bench'
+
+BENCHMARK_CONCURRENCY=$(action-get concurrency)
+BENCHMARK_REQUESTS=$(action-get requests)
+BENCHMARK_IMAGE=$(action-get image)
+SWARM_LEADER=$(leader-get swarm_manager)
+
+if [ -z "$SWARM_LEADER" ]; then
+  action-fail "Swarm is still setting up. Skipping benchmark run."
+  exit 0
+fi
+
+if [ ! -d $CHARM_DIR/swarm_credentials ]; then
+  # This may need additional validation. Just because we have the dir doesn't
+  # mean we have the certificates.
+  action-fail "This is, um, awkward, I swear this never happens. But I can't find the SSL certificates for Docker Server auth."
+  exit 0
+fi
+
+# The yaml sets defaults, but you can override these to None values. We dont want that.
+if [ -z "$BENCHMARK_CONCURRENCY" ]; then
+  BENCHMARK_CONCURRENCY=5
+fi
+
+if [ -z "$BENCHMARK_REQUESTS" ]; then
+  BENCHMARK_REQUESTS=100
+fi
+
+
+if [ -z "$BENCHMARK_IMAGE" ]; then
+  BENCHMARK_IMAGE='ubuntu'
+fi
+
+BENCHMARK_RUNTIME_IMAGE=$(docker images -q $RUNTIME_IMAGE)
+
+if [ -z "$BENCHMARK_RUNTIME_IMAGE" ]; then
+  DOCKER_TLS_VERIFY=1
+  DOKER_HOST=$SWARM_LEADER
+  DOCKER_CERT_PATH="$CHARM_DIR/swarm_credentials"
+  docker pull $RUNTIME_IMAGE
+fi
+
+BENCH_IMAGE=$(docker images -q $RUNTIME_IMAGE)
+
+if [ -z "$BENCH_IMAGE" ]; then
+  DOCKER_TLS_VERIFY=1
+  DOKER_HOST=$SWARM_LEADER
+  DOCKER_CERT_PATH="$CHARM_DIR/swarm_credentials"
+  docker pull $BENCH_IMAGE
+fi
+
+# Cleanup from any stale runs
+docker rm $(docker ps -a -q --filter label=com.juju.benchmark)
+
+status-set waiting "Benchmarking swarm - launching $BENCHMARK_IMAGE $BENCHMARK_REQUESTS times"
+
+benchmark-start
+
+# if this fails, and throws a panic, see issue:
+# https://github.com/aluzzardi/swarm-bench/issues/4
+
+docker run -v $CHARM_DIR/swarm_credentials:/docker_certs \
+           -e DOCKER_TLS_VERIFY=1 \
+           -e DOCKER_HOST=$SWARM_LEADER \
+           -e DOCKER_CERT_PATH=/docker_certs \
+           --label=com.juju.benchmark=swarmbench \
+           $RUNTIME_IMAGE -c $BENCHMARK_CONCURRENCY -n $BENCHMARK_REQUESTS -i $BENCHMARK_IMAGE
+
+benchmark-finish
+
+
+# Determine if the benchmark was a success
+RUNPREP = docker logs $CONTAINER_ID
+
+# parse results goes here
+parse_swarmbench_results.py $CONTAINER_ID
+
+status-set waiting "Cleaning up after benchmark run"
+docker rm $(docker ps -a -q --filter label=com.juju.benchmark)
+status-set active

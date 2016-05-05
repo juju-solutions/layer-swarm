@@ -1,34 +1,40 @@
-from charmhelpers.core.templating import render
-from charms.reactive import remove_state
-from charms.reactive import set_state
-from charms.reactive import when
-from charms.reactive import when_not
-
 from charms.docker import DockerOpts
 from charms.docker import Compose
 
+from charms.leadership import leader_set
+from charms.leadership import leader_get
+
+from charms.reactive import remove_state
+from charms.reactive import set_state
+from charms.reactive import when
+from charms.reactive import when_any
+from charms.reactive import when_not
+
+from charmhelpers.core.hookenv import is_leader
 from charmhelpers.core.hookenv import log
 from charmhelpers.core.hookenv import status_set
-from charmhelpers.core.hookenv import is_leader
-from charmhelpers.core.hookenv import leader_get
 from charmhelpers.core.hookenv import unit_get
 from charmhelpers.core.hookenv import open_port
 from charmhelpers.core.hookenv import unit_private_ip
 from charmhelpers.core import unitdata
 from charmhelpers.core.host import chdir
 from charmhelpers.core.host import service_restart
+from charmhelpers.core.templating import render
 
 from os import getenv
 from os import makedirs
 from os import path
 from os import rename
+from os import remove
 
-import subprocess
 from shlex import split
 from shutil import copyfile
 
 from tlslib import client_cert
 from tlslib import ca
+
+import subprocess
+import charms.leadership  # noqa
 
 
 @when('etcd.available', 'docker.available')
@@ -69,12 +75,16 @@ def start_swarm(cluster_string):
     set_state('swarm.available')
 
 
+@when('leadership.is_leader')
 @when('swarm.available')
-def swarm_messaging():
-    if is_leader():
-        status_set('active', 'Swarm leader running')
-    else:
-        status_set('active', 'Swarm follower')
+def swarm_leader_messaging():
+    status_set('active', 'Swarm leader running')
+
+
+@when_not('leadership.is_leader')
+@when('swarm.available')
+def swarm_follower_messaging():
+    status_set('active', 'Swarm follower')
 
 
 @when_not('etcd.connected', 'consul.connected')
@@ -101,6 +111,7 @@ def swarm_relation_broken():
     status_set('waiting', 'Reconfiguring swarm')
 
 
+@when('leadership.is_leader')
 @when('easyrsa installed')
 @when_not('swarm.tls.opensslconfig.modified')
 def inject_swarm_tls_template():
@@ -109,10 +120,8 @@ def inject_swarm_tls_template():
     with how swarm expects TLS keys to be generated. We will append what
     we need to the x509-type, and poke layer-tls to regenerate.
     """
-    if not is_leader():
-        return
-    else:
-        status_set('maintenance', 'Reconfiguring SSL PKI configuration')
+
+    status_set('maintenance', 'Reconfiguring SSL PKI configuration')
 
     log('Updating EasyRSA3 OpenSSL Config')
     openssl_config = 'easy-rsa/easyrsa3/x509-types/server'
@@ -132,11 +141,11 @@ def inject_swarm_tls_template():
 
 @when('tls.server.certificate available')
 def enable_client_tls():
-    '''
+    """
     Copy the TLS certificates in place and generate mount points for the swarm
     manager to mount the certs. This enables client-side TLS security on the
     TCP service.
-    '''
+    """
     if not path.exists('/etc/docker'):
         makedirs('/etc/docker')
 
@@ -168,32 +177,75 @@ def enable_client_tls():
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
 
 
-@when('swarm.available')
-@when_not('client.credentials.placed')
-def prepare_end_user_package():
+@when('leadership.is_leader')
+@when('tls.client.certificate available')
+@when_not('leadership.set.client_cert', 'leadership.set.client_key')
+def prepare_default_client_credentials():
     """ Generate a downloadable package for clients to use to speak to the
     swarm cluster. """
-    if is_leader():
-        client_cert('./swarm_credentials')
-        ca('./swarm_credentials')
 
-        # Prepare the workspace
-        with chdir('./swarm_credentials'):
-            rename('client.key', 'key.pem')
-            rename('client.crt', 'cert.pem')
-            rename('ca.crt', 'ca.pem')
+    # Leverage TLSLib to copy the default cert from PKI
+    client_cert('./swarm_credentials')
+    ca('./swarm_credentials')
 
-        template_vars = {'public_address': unit_get('public-address')}
+    # Prepare the workspace
+    with chdir('./swarm_credentials'):
+        rename('client.key', 'key.pem')
+        rename('client.crt', 'cert.pem')
+        rename('ca.crt', 'ca.pem')
 
-        render('enable.sh', './swarm_credentials/enable.sh', template_vars)
+    with open('swarm_credentials/key.pem', 'r') as fp:
+        key_contents = fp.read()
+    with open('swarm_credentials/cert.pem', 'r') as fp:
+        crt_contents = fp.read()
 
-        cmd = 'tar cvf swarm_credentials.tar swarm_credentials'
-        subprocess.check_call(split(cmd))
-        copyfile('swarm_credentials.tar', '/home/ubuntu/swarm_credentials.tar')
-        set_state('client.credentials.placed')
+    leader_set({'client_cert': crt_contents,
+                'client_key': key_contents})
+
+
+@when_any('leadership.changed.client_cert', 'leadership.changed.client_key')
+@when_not('client.credentials.placed')
+def prepare_end_user_package():
+    """ Prepare the tarball package for clients to use to connet to the
+        swarm cluster using the default client credentials. """
+
+    # If we are a follower, we dont have keys and need to fetch them
+    # from leader-data, which triggered `leadership.set.client_cert`
+    # So it better be there!
+    if not path.exists('swarm_credentials'):
+        makedirs('swarm_credentials')
+        with open('swarm_credentials/key.pem', 'w+') as fp:
+            fp.write(leader_get('client_key'))
+        with open('swarm_credentials/cert.pem', 'w+') as fp:
+            fp.write(leader_get('client_cert'))
+        with open('swarm_credentials/ca.pem', 'w+') as fp:
+            fp.write(leader_get('certificate_authority'))
+
+    # Render the client package script
+    template_vars = {'public_address': unit_get('public-address')}
+    render('enable.sh', './swarm_credentials/enable.sh', template_vars)
+
+    # clear out any stale credentials package
+    if path.exists('swarm_credentials.tar'):
+        remove('swarm_credentials.tar')
+
+    # Package up the client credentials
+    cmd = 'tar cvf swarm_credentials.tar swarm_credentials'
+    subprocess.check_call(split(cmd))
+    copyfile('swarm_credentials.tar', '/home/ubuntu/swarm_credentials.tar')
+    set_state('client.credentials.placed')
+
+
+@when('leadership.is_leader')
+def open_swarm_manager_port():
+    open_port(3376)
+    # Tell the followers where to connect to the manager for internal
+    # operations.
+    leader_set({'swarm_manager': 'tcp://{}:3376'.format(unit_private_ip())})
 
 
 def bind_docker_daemon(connection_string):
+    """ Bind the docker daemon to a TCP socket with TLS credentials """
     status_set('maintenance', 'Configuring Docker for TCP connections')
     opts = DockerOpts()
     private_address = unit_private_ip()
@@ -204,5 +256,3 @@ def bind_docker_daemon(connection_string):
     render('docker.defaults', '/etc/default/docker', {'opts': opts.to_s()})
     service_restart('docker')
     open_port(2376)
-    if is_leader():
-        open_port(3376)
