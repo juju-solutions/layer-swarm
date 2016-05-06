@@ -2,5 +2,6 @@ repo: https://github.com/chuckbutler/layer-swarm.git
 includes:
   - 'layer:docker'
   - 'layer:tls'
+  - 'layer:leadership'
   - 'interface:etcd'
   - 'interface:consul'

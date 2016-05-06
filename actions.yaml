@@ -1,0 +1,15 @@
+swarmbench:
+  description: Execute a swarmbench based benchmark
+  params:
+    concurrency:
+      type: number
+      description: Concurrent number of requests
+      default: 3
+    requests:
+      type: number
+      description: Number of containers to start for the benchmarking session
+      default: 50
+    image:
+      type: string
+      description: The image(s) to use for benchmarking.
+      default: ubuntu
