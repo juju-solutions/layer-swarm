@@ -74,11 +74,13 @@ benchmark-finish
 
 
 # Determine if the benchmark was a success
-RUNPREP = docker logs $CONTAINER_ID
+CONTAINER_ID=$(docker logs -f "label=com.juju.benchmark" -q)
 
 # parse results goes here
 parse_swarmbench_results.py $CONTAINER_ID
 
+# This only cleans up the runner. This does not clean up any of the containers
+# after the bench run
 status-set waiting "Cleaning up after benchmark run"
 docker rm $(docker ps -a -q --filter label=com.juju.benchmark)
 status-set active
