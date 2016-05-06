@@ -32,8 +32,6 @@ def parse_output(container_id):
 
     parsed = run_output[-1].replace('Time per container: ', '').split('|')
 
-    print(parsed)
-
     mean = parsed[0].replace('ms [mean] ', '')
     ninety = parsed[1].replace('ms [90th] ', '')
     ninetynine = parsed[2].replace('ms [99th] ', '')
@@ -57,7 +55,7 @@ def parse_output(container_id):
     )
 
     action_set(
-        "results.00th-percentile",
+        "results.99th-percentile",
         {'value': ninetynine, 'units': 'ms'}
     )
 

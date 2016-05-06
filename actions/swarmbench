@@ -54,14 +54,16 @@ if [ -z "$BENCH_IMAGE" ]; then
 fi
 
 # Cleanup from any stale runs
-docker rm $(docker ps -a -q --filter label=com.juju.benchmark)
-
+set +e
+docker rm $(docker ps -a -q --filter label=com.juju.benchmark) > /dev/null 2>&1
+set -e
 status-set waiting "Benchmarking swarm - launching $BENCHMARK_IMAGE $BENCHMARK_REQUESTS times"
 
 benchmark-start
 
 # if this fails, and throws a panic, see issue:
 # https://github.com/aluzzardi/swarm-bench/issues/4
+# https://github.com/docker/swarm/pull/2190
 
 docker run -v $CHARM_DIR/swarm_credentials:/docker_certs \
            -e DOCKER_TLS_VERIFY=1 \
@@ -72,12 +74,10 @@ docker run -v $CHARM_DIR/swarm_credentials:/docker_certs \
 
 benchmark-finish
 
-
-# Determine if the benchmark was a success
-CONTAINER_ID=$(docker logs -f "label=com.juju.benchmark" -q)
+CONTAINER_ID=$(docker ps -q -a -f "label=com.juju.benchmark")
 
 # parse results goes here
-parse_swarmbench_results.py $CONTAINER_ID
+python3 actions/parse_swarmbench_output.py $CONTAINER_ID
 
 # This only cleans up the runner. This does not clean up any of the containers
 # after the bench run

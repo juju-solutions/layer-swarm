@@ -4,11 +4,11 @@ swarmbench:
     concurrency:
       type: number
       description: Concurrent number of requests
-      default: 5
+      default: 3
     requests:
       type: number
       description: Number of containers to start for the benchmarking session
-      default: 100
+      default: 50
     image:
       type: string
       description: The image(s) to use for benchmarking.
