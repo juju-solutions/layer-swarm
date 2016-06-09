@@ -1,7 +1,22 @@
 agent:
   image: swarm
   restart: always
-  command: join --advertise={{addr}}:{{port}} {{connection_string}}/swarm
+  {% if discovery_tls_path -%}
+  volumes:
+    - {{ discovery_tls_path }}:/discovery_tls
+  {%- endif %}
+  command:
+    - join
+    - --advertise={{addr}}:{{port}}
+    {% if discovery_tls_path -%}
+    - --discovery-opt
+    - kv.cacertfile=/discovery_tls/client-ca.pem
+    - --discovery-opt
+    - kv.certfile=/discovery_tls/client-cert.pem
+    - --discovery-opt
+    - kv.keyfile=/discovery_tls/client-key.pem
+    {%- endif %}
+    - {{connection_string}}/swarm
 {%- if leader %}
 manager:
   image: swarm
@@ -10,6 +25,9 @@ manager:
     - 3376:2375
   volumes:
     - /etc/docker:/tls
+    {% if discovery_tls_path -%}
+    - {{ discovery_tls_path }}:/discovery_tls
+    {%- endif %}
   command:
     - manage
     - --tlsverify
@@ -20,6 +38,14 @@ manager:
     - spread
     - --advertise
     - {{ addr }}:{{ port }}
+    {% if discovery_tls_path -%}
+    - --discovery-opt
+    - kv.cacertfile=/discovery_tls/client-ca.pem
+    - --discovery-opt
+    - kv.certfile=/discovery_tls/client-cert.pem
+    - --discovery-opt
+    - kv.keyfile=/discovery_tls/client-key.pem
+    {%- endif %}
     - {{ connection_string }}/swarm
 
 {% endif -%}
