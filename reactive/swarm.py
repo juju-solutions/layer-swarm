@@ -46,25 +46,19 @@ def swarm_etcd_cluster_setup(etcd):
     """
     opts = DockerOpts()
     # capture and place etcd TLS certificates
-    certs = etcd.ssl_certificates()
+    certs = etcd.get_client_credentials()
     unit_name = getenv('JUJU_UNIT_NAME').replace('/', '-')
-    cert_path = '/etc/ssl/{}/'.format(unit_name)
+    cert_path = '/etc/ssl/{}'.format(unit_name)
 
-    if not path.exists(cert_path):
-        makedirs(cert_path)
+    # if we have all the keys required, save them on disk
+    if certs['client_ca'] and certs['client_key'] and certs['client_cert']:
+        if not path.exists(cert_path):
+            makedirs(cert_path)
+        ca = "{}/client-ca.pem".format(cert_path)
+        cert = "{}/client-cert.pem".format(cert_path)
+        key = "{}/client-key.pem".format(cert_path)
 
-    # favor the data on the wire always, and re-write the certificates
-    if certs['client_cert']:
-        with open('{}/{}'.format(cert_path, 'client-cert.pem'), 'w+') as fp:
-            fp.write(certs['client_cert'])
-
-    if certs['client_key']:
-        with open('{}/{}'.format(cert_path, 'client-key.pem'), 'w+') as fp:
-            fp.write(certs['client_key'])
-
-    if certs['client_ca']:
-        with open('{}/{}'.format(cert_path, 'client-ca.pem'), 'w+') as fp:
-            fp.write(certs['client_ca'])
+        etcd.save_client_credentials(key, cert, ca)
 
     # format the connection string based on presence of encryption in the
     # connection string. Docker is the only known suite of tooling to use
@@ -73,10 +67,12 @@ def swarm_etcd_cluster_setup(etcd):
     secure_discovery = 'https' in etcd.connection_string()
     if secure_discovery:
         con_string = etcd.connection_string().replace('https', 'etcd')
-        cert = 'kv.certfile={}/client-cert.pem'.format(cert_path)
-        key = 'kv.certfile={}/client-key.pem'.format(cert_path)
-        opts.add('cluster-store-opt', cert)
-        opts.add('cluster-store-opt', key)
+        ccert = 'kv.certfile={}'.format(cert)
+        ckey = 'kv.keyfile={}'.format(key)
+        cca = 'kv.cacertfile={}'.format(ca)
+        opts.add('cluster-store-opt', ccert)
+        opts.add('cluster-store-opt', ckey)
+        opts.add('cluster-store-opt', cca)
     else:
         con_string = etcd.connection_string().replace('http', 'etcd')
 
