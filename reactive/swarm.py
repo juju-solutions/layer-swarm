@@ -17,20 +17,19 @@ from charmhelpers.core.hookenv import unit_get
 from charmhelpers.core.hookenv import open_port
 from charmhelpers.core.hookenv import unit_private_ip
 from charmhelpers.core import unitdata
-from charmhelpers.core.host import chdir
 from charmhelpers.core.host import service_restart
 from charmhelpers.core.templating import render
 
 from os import getenv
 from os import makedirs
 from os import path
-from os import rename
 from os import remove
 
 from shlex import split
 from shutil import copyfile
 
 from tlslib import client_cert
+from tlslib import client_key
 from tlslib import ca
 
 import subprocess
@@ -45,9 +44,45 @@ def swarm_etcd_cluster_setup(etcd):
     leading with the agent, connecting to the discovery service, then follow
     up with the manager container on the leader node.
     """
-    con_string = etcd.connection_string().replace('http', 'etcd')
+    opts = DockerOpts()
+    # capture and place etcd TLS certificates
+    certs = etcd.get_client_credentials()
+    unit_name = getenv('JUJU_UNIT_NAME').replace('/', '-')
+    cert_path = '/etc/ssl/{}'.format(unit_name)
+
+    # if we have all the keys required, save them on disk
+    if certs['client_ca'] and certs['client_key'] and certs['client_cert']:
+        if not path.exists(cert_path):
+            makedirs(cert_path)
+        ca = "{}/client-ca.pem".format(cert_path)
+        cert = "{}/client-cert.pem".format(cert_path)
+        key = "{}/client-key.pem".format(cert_path)
+
+        etcd.save_client_credentials(key, cert, ca)
+
+    # format the connection string based on presence of encryption in the
+    # connection string. Docker is the only known suite of tooling to use
+    # the etcd:// protocol uri... dubious
+
+    secure_discovery = 'https' in etcd.connection_string()
+    if secure_discovery:
+        con_string = etcd.connection_string().replace('https', 'etcd')
+        ccert = 'kv.certfile={}'.format(cert)
+        ckey = 'kv.keyfile={}'.format(key)
+        cca = 'kv.cacertfile={}'.format(ca)
+        opts.add('cluster-store-opt', ccert)
+        opts.add('cluster-store-opt', ckey)
+        opts.add('cluster-store-opt', cca)
+    else:
+        con_string = etcd.connection_string().replace('http', 'etcd')
+
     bind_docker_daemon(con_string)
-    start_swarm(con_string)
+
+    if secure_discovery:
+        start_swarm(con_string, cert_path)
+    else:
+        start_swarm(con_string)
+
     status_set('active', 'Swarm configured. Happy swarming')
 
 
@@ -62,13 +97,15 @@ def swarm_consul_cluster_setup(consul):
     start_swarm(connection_string.rstrip(','))
 
 
-def start_swarm(cluster_string):
+def start_swarm(cluster_string, cert_path=None):
     ''' Render the compose configuration and start the swarm scheduler '''
     opts = {}
     opts['addr'] = unit_private_ip()
     opts['port'] = 2376
     opts['leader'] = is_leader()
     opts['connection_string'] = cluster_string
+    if cert_path:
+        opts['discovery_tls_path'] = cert_path
     render('docker-compose.yml', 'files/swarm/docker-compose.yml', opts)
     c = Compose('files/swarm')
     c.up()
@@ -111,7 +148,6 @@ def swarm_relation_broken():
     status_set('waiting', 'Reconfiguring swarm')
 
 
-@when('leadership.is_leader')
 @when('easyrsa installed')
 @when_not('swarm.tls.opensslconfig.modified')
 def inject_swarm_tls_template():
@@ -185,14 +221,9 @@ def prepare_default_client_credentials():
     swarm cluster. """
 
     # Leverage TLSLib to copy the default cert from PKI
-    client_cert('./swarm_credentials')
-    ca('./swarm_credentials')
-
-    # Prepare the workspace
-    with chdir('./swarm_credentials'):
-        rename('client.key', 'key.pem')
-        rename('client.crt', 'cert.pem')
-        rename('ca.crt', 'ca.pem')
+    client_cert(None, './swarm_credentials/cert.pem')
+    client_key(None, './swarm_credentials/key.pem')
+    ca(None, './swarm_credentials/ca.pem')
 
     with open('swarm_credentials/key.pem', 'r') as fp:
         key_contents = fp.read()
@@ -229,10 +260,10 @@ def prepare_end_user_package():
     if path.exists('swarm_credentials.tar'):
         remove('swarm_credentials.tar')
 
-    # Package up the client credentials
-    cmd = 'tar cvf swarm_credentials.tar swarm_credentials'
+    cmd = 'tar cvfz swarm_credentials.tar.gz swarm_credentials'
     subprocess.check_call(split(cmd))
-    copyfile('swarm_credentials.tar', '/home/ubuntu/swarm_credentials.tar')
+    copyfile('swarm_credentials.tar.gz',
+             '/home/ubuntu/swarm_credentials.tar.gz')
     set_state('client.credentials.placed')
 
 
